@@ -6,13 +6,16 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -25,11 +28,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GalleryScreen(
     onBackClick: () -> Unit,
@@ -37,7 +42,7 @@ fun GalleryScreen(
 ) {
     val context = LocalContext.current
     var imageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
-    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+    var initialSelectedIndex by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(Unit) {
         imageUris = fetchAllImageUris(context)
@@ -49,6 +54,7 @@ fun GalleryScreen(
             .background(Color(0xFF121212))
             .padding(top = 40.dp, start = 16.dp, end = 16.dp)
     ) {
+        // Top Header Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -66,6 +72,7 @@ fun GalleryScreen(
             )
         }
 
+        // Gallery Grid View
         if (imageUris.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -80,52 +87,69 @@ fun GalleryScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(imageUris) { uri ->
+                itemsIndexed(imageUris) { index, uri ->
                     GalleryImageItem(
                         context = context,
                         uri = uri,
-                        onClick = { selectedImageUri = uri }
+                        onClick = { initialSelectedIndex = index }
                     )
                 }
             }
         }
     }
 
-    // Full Screen Image Viewer Modal
-    selectedImageUri?.let { uri ->
+    // Full Screen Left-Right Swipeable Image Slider Dialog
+    initialSelectedIndex?.let { startIndex ->
         Dialog(
-            onDismissRequest = { selectedImageUri = null },
+            onDismissRequest = { initialSelectedIndex = null },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
+            val pagerState = rememberPagerState(
+                initialPage = startIndex,
+                pageCount = { imageUris.size }
+            )
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
             ) {
-                val fullBitmap = remember(uri) {
-                    try {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                            val source = ImageDecoder.createSource(context.contentResolver, uri)
-                            ImageDecoder.decodeBitmap(source)
-                        } else {
-                            @Suppress("DEPRECATION")
-                            MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                // Horizontal Left-Right Swipeable Slider Pager
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize()
+                ) { pageIndex ->
+                    val uri = imageUris[pageIndex]
+                    val fullBitmap = remember(uri) {
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                val source = ImageDecoder.createSource(context.contentResolver, uri)
+                                ImageDecoder.decodeBitmap(source)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                            }
+                        } catch (e: Exception) {
+                            null
                         }
-                    } catch (e: Exception) {
-                        null
+                    }
+
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        fullBitmap?.let { bmp ->
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = "Full Photo View",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
                     }
                 }
 
-                fullBitmap?.let { bmp ->
-                    Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = "Full Photo View",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit
-                    )
-                }
-
-                // Top Control Bar on Full View (Close & Edit Buttons)
+                // Top Overlay Controls (Close button, Page counter, Edit button)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -134,15 +158,22 @@ fun GalleryScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(onClick = { selectedImageUri = null }) {
+                    Button(onClick = { initialSelectedIndex = null }) {
                         Text("Close")
                     }
 
+                    Text(
+                        text = "${pagerState.currentPage + 1} / ${imageUris.size}",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
                     Button(
                         onClick = {
-                            val uriToEdit = uri
-                            selectedImageUri = null
-                            onEditImageClick(uriToEdit)
+                            val currentUri = imageUris[pagerState.currentPage]
+                            initialSelectedIndex = null
+                            onEditImageClick(currentUri)
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF1493))
                     ) {
