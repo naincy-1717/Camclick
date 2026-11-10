@@ -1,6 +1,7 @@
 package com.example.camclick
 
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -24,11 +25,44 @@ fun CameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // State to track selected camera (defaults to back camera)
     var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
+
+    // Re-bind camera cleanly whenever lensFacing state changes
+    LaunchedEffect(lensFacing, previewView) {
+        val currentPreviewView = previewView ?: return@LaunchedEffect
+
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+
+            val cameraSelector = CameraSelector.Builder()
+                .requireLensFacing(lensFacing)
+                .build()
+
+            // Check if the device actually has this camera hardware available
+            if (cameraProvider.hasCamera(cameraSelector)) {
+                val preview = Preview.Builder().build().also {
+                    it.setSurfaceProvider(currentPreviewView.surfaceProvider)
+                }
+
+                try {
+                    cameraProvider.unbindAll()
+                    cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        preview
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            } else {
+                Toast.makeText(context, "Selected camera is not available on this device", Toast.LENGTH_SHORT).show()
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // CameraX Live Preview View
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
@@ -37,37 +71,13 @@ fun CameraScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     scaleType = PreviewView.ScaleType.FILL_CENTER
+                }.also {
+                    previewView = it
                 }
-            },
-            update = { previewView ->
-                val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-                cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
-
-                    // Dynamically set camera based on lensFacing state
-                    val cameraSelector = CameraSelector.Builder()
-                        .requireLensFacing(lensFacing)
-                        .build()
-
-                    try {
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            cameraSelector,
-                            preview
-                        )
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }, ContextCompat.getMainExecutor(context))
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Top Control Bar Overlay
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -75,12 +85,10 @@ fun CameraScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Back Button
             Button(onClick = onBackClick) {
                 Text("Back")
             }
 
-            // Switch Camera Toggle Button
             Button(
                 onClick = {
                     lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
@@ -90,7 +98,7 @@ fun CameraScreen(
                     }
                 }
             ) {
-                Text(if (lensFacing == CameraSelector.LENS_FACING_BACK) "Front Cam" else "Back Cam")
+                Text(if (lensFacing == CameraSelector.LENS_FACING_BACK) "Switch to Front" else "Switch to Back")
             }
         }
     }
