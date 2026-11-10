@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.camclick.ui.theme.CamclickTheme
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,7 +37,6 @@ class MainActivity : ComponentActivity() {
                 var currentScreen by remember { mutableStateOf("landing") }
                 val context = LocalContext.current
 
-                // Launcher for asking Camera Permission
                 val cameraPermissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
                 ) { isGranted ->
@@ -63,11 +63,14 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onSavedPhotosClick = {
-                                Toast.makeText(context, "Saved Photos clicked", Toast.LENGTH_SHORT).show()
+                                currentScreen = "gallery"
                             },
                             modifier = Modifier.padding(innerPadding)
                         )
                         "camera" -> CameraScreen(
+                            onBackClick = { currentScreen = "landing" }
+                        )
+                        "gallery" -> GalleryScreen(
                             onBackClick = { currentScreen = "landing" }
                         )
                     }
