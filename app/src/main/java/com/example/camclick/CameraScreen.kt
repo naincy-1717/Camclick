@@ -1,6 +1,10 @@
 package com.example.camclick
 
+import android.content.ContentUris
 import android.content.ContentValues
+import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.view.ViewGroup
@@ -13,11 +17,13 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -25,13 +31,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Locale
+import androidx.compose.ui.unit.sp
 
 @Composable
 fun CameraScreen(
@@ -44,6 +54,15 @@ fun CameraScreen(
     var flashMode by remember { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
+    var lastThumbnail by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    // Load the most recent photo thumbnail from MediaStore on screen open
+    LaunchedEffect(Unit) {
+        val latestUri = fetchLatestImageUri(context)
+        latestUri?.let { uri ->
+            lastThumbnail = loadThumbnailFromUri(context, uri)
+        }
+    }
 
     // ImageCapture use case
     val imageCapture = remember {
@@ -90,7 +109,7 @@ fun CameraScreen(
         }, ContextCompat.getMainExecutor(context))
     }
 
-    // Helper function to capture and save photo
+    // Helper function to capture photo and update thumbnail
     fun takePhoto() {
         val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
             .format(System.currentTimeMillis())
@@ -114,11 +133,14 @@ fun CameraScreen(
             ContextCompat.getMainExecutor(context),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    Toast.makeText(context, "Photo saved to Pictures/CamCraft", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Photo saved!", Toast.LENGTH_SHORT).show()
+                    output.savedUri?.let { uri ->
+                        lastThumbnail = loadThumbnailFromUri(context, uri)
+                    }
                 }
 
                 override fun onError(exc: ImageCaptureException) {
-                    Toast.makeText(context, "Failed to capture photo: ${exc.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Capture failed: ${exc.message}", Toast.LENGTH_SHORT).show()
                 }
             }
         )
@@ -141,7 +163,7 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Top Controls Bar
+        // Top Control Bar Overlay
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -188,17 +210,42 @@ fun CameraScreen(
             }
         }
 
-        // Bottom Shutter / Capture Button
+        // Bottom Controls Bar (Thumbnail on left, Shutter in center)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 40.dp),
-            contentAlignment = Alignment.Center
+                .padding(bottom = 40.dp, start = 24.dp, end = 24.dp)
         ) {
+            // Last Image Thumbnail (Bottom Left)
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .align(Alignment.CenterStart)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.DarkGray)
+                    .border(BorderStroke(2.dp, Color.White), RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                lastThumbnail?.let { bitmap ->
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = "Last Image Thumbnail",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } ?: Text(
+                    text = "No Pic",
+                    color = Color.White,
+                    fontSize = 10.sp
+                )
+            }
+
+            // Capture Shutter Button (Center)
             Box(
                 modifier = Modifier
                     .size(80.dp)
+                    .align(Alignment.Center)
                     .clip(CircleShape)
                     .background(Color.White)
                     .border(BorderStroke(4.dp, Color(0xFFFF1493)), CircleShape)
@@ -213,5 +260,52 @@ fun CameraScreen(
                 )
             }
         }
+    }
+}
+
+// Helper function to query the latest saved photo from Pictures/CamCraft
+private fun fetchLatestImageUri(context: Context): Uri? {
+    val projection = arrayOf(MediaStore.Images.Media._ID)
+    val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+    } else {
+        "${MediaStore.Images.Media.DATA} LIKE ?"
+    }
+    val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        arrayOf("Pictures/CamCraft%")
+    } else {
+        arrayOf("%Pictures/CamCraft%")
+    }
+    val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+
+    return context.contentResolver.query(
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+        projection,
+        selection,
+        selectionArgs,
+        sortOrder
+    )?.use { cursor ->
+        if (cursor.moveToFirst()) {
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            val id = cursor.getLong(idColumn)
+            ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+        } else {
+            null
+        }
+    }
+}
+
+// Helper function to load a scaled-down thumbnail bitmap from URI
+private fun loadThumbnailFromUri(context: Context, uri: Uri): ImageBitmap? {
+    return try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            context.contentResolver.loadThumbnail(uri, android.util.Size(120, 120), null).asImageBitmap()
+        } else {
+            @Suppress("DEPRECATION")
+            val bitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+            Bitmap.createScaledBitmap(bitmap, 120, 120, true).asImageBitmap()
+        }
+    } catch (e: Exception) {
+        null
     }
 }
