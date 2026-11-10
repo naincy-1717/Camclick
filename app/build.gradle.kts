@@ -58,6 +58,5 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
 
-// Optional: Add this if you plan to use Jetpack Compose for your UI later
-// implementation("androidx.camera:camera-extensions:$cameraxVersion")
+
 }
