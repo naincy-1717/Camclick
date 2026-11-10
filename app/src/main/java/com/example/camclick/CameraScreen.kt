@@ -6,14 +6,20 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
+import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.util.Size
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
@@ -22,10 +28,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,13 +42,36 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
+import androidx.compose.ui.viewinterop.AndroidView
+
+// Save Location Types
+enum class SaveLocationType {
+    PUBLIC_CAMCRAFT, // Default MediaStore > Pictures > CamCraft
+    PRIVATE_INTERNAL, // Private App Folder (filesDir)
+    CUSTOM_SAF        // User selected folder via SAF
+}
+
+// Image Format Types
+enum class ImageFormatType {
+    JPEG,
+    PNG
+}
+
+// Resolution Quality Types
+enum class ResolutionType {
+    HIGH,   // 1920x1080
+    MEDIUM, // 1280x720
+    LOW     // 640x480
+}
 
 @Composable
 fun CameraScreen(
@@ -51,11 +81,35 @@ fun CameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // Camera & Flash states
     var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
     var flashMode by remember { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var lastThumbnail by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    // Settings States
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var saveLocationType by remember { mutableStateOf(SaveLocationType.PUBLIC_CAMCRAFT) }
+    var customSafUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedFormat by remember { mutableStateOf(ImageFormatType.JPEG) }
+    var selectedResolution by remember { mutableStateOf(ResolutionType.HIGH) }
+
+    // Launcher for Storage Access Framework (SAF) folder picker
+    val safFolderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            // Persist permission for selected folder
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            customSafUri = uri
+            saveLocationType = SaveLocationType.CUSTOM_SAF
+            Toast.makeText(context, "Custom folder set!", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     LaunchedEffect(Unit) {
         val latestUri = fetchLatestImageUri(context)
@@ -64,17 +118,28 @@ fun CameraScreen(
         }
     }
 
-    val imageCapture = remember {
+    // Build ImageCapture based on selected settings
+    val imageCapture = remember(selectedFormat, selectedResolution, flashMode) {
+        val targetSize = when (selectedResolution) {
+            ResolutionType.HIGH -> Size(1920, 1080)
+            ResolutionType.MEDIUM -> Size(1280, 720)
+            ResolutionType.LOW -> Size(640, 480)
+        }
+
+        val resSelector = ResolutionSelector.Builder()
+            .setResolutionStrategy(
+                ResolutionStrategy(targetSize, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
+            )
+            .build()
+
         ImageCapture.Builder()
             .setFlashMode(flashMode)
+            .setResolutionSelector(resSelector)
             .build()
     }
 
-    LaunchedEffect(flashMode) {
-        imageCapture.flashMode = flashMode
-    }
-
-    LaunchedEffect(lensFacing, previewView) {
+    // Bind Camera Lifecycle
+    LaunchedEffect(lensFacing, previewView, imageCapture) {
         val currentPreviewView = previewView ?: return@LaunchedEffect
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -107,43 +172,126 @@ fun CameraScreen(
         }, ContextCompat.getMainExecutor(context))
     }
 
+    // Capture & Save Logic based on Save Location and Image Format
     fun takePhoto() {
-        val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
-            .format(System.currentTimeMillis())
+        val timeStamp = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
+        val extension = if (selectedFormat == ImageFormatType.JPEG) "jpg" else "png"
+        val mimeType = if (selectedFormat == ImageFormatType.JPEG) "image/jpeg" else "image/png"
+        val fileName = "CamCraft_$timeStamp.$extension"
 
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CamCraft")
-            }
-        }
-
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(
-            context.contentResolver,
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            contentValues
-        ).build()
-
-        imageCapture.takePicture(
-            outputOptions,
-            ContextCompat.getMainExecutor(context),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    Toast.makeText(context, "Photo saved!", Toast.LENGTH_SHORT).show()
-                    output.savedUri?.let { uri ->
-                        lastThumbnail = loadThumbnailFromUri(context, uri)
+        when (saveLocationType) {
+            SaveLocationType.PUBLIC_CAMCRAFT -> {
+                // Save to MediaStore > Pictures > CamCraft
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CamCraft")
                     }
                 }
 
-                override fun onError(exc: ImageCaptureException) {
-                    Toast.makeText(context, "Capture failed: ${exc.message}", Toast.LENGTH_SHORT).show()
+                val outputOptions = ImageCapture.OutputFileOptions.Builder(
+                    context.contentResolver,
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    contentValues
+                ).build()
+
+                imageCapture.takePicture(
+                    outputOptions,
+                    ContextCompat.getMainExecutor(context),
+                    object : ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                            Toast.makeText(context, "Saved to Pictures/CamCraft", Toast.LENGTH_SHORT).show()
+                            output.savedUri?.let { uri ->
+                                lastThumbnail = loadThumbnailFromUri(context, uri)
+                            }
+                        }
+
+                        override fun onError(exc: ImageCaptureException) {
+                            Toast.makeText(context, "Failed: ${exc.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+
+            SaveLocationType.PRIVATE_INTERNAL -> {
+                // Save to Internal App Private Storage (filesDir/CamCraft)
+                val internalFolder = File(context.filesDir, "CamCraft")
+                if (!internalFolder.exists()) internalFolder.mkdirs()
+
+                val photoFile = File(internalFolder, fileName)
+                val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+
+                imageCapture.takePicture(
+                    outputOptions,
+                    ContextCompat.getMainExecutor(context),
+                    object : ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                            Toast.makeText(context, "Saved to Private App Folder", Toast.LENGTH_SHORT).show()
+                            val savedUri = Uri.fromFile(photoFile)
+                            lastThumbnail = loadThumbnailFromUri(context, savedUri)
+                        }
+
+                        override fun onError(exc: ImageCaptureException) {
+                            Toast.makeText(context, "Failed: ${exc.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+
+            SaveLocationType.CUSTOM_SAF -> {
+                // Save to Custom SAF Selected Folder
+                val safUri = customSafUri
+                if (safUri == null) {
+                    Toast.makeText(context, "Please select a custom folder first in settings!", Toast.LENGTH_SHORT).show()
+                    return
+                }
+
+                try {
+                    val treeDocumentUri = DocumentsContract.buildDocumentUriUsingTree(
+                        safUri,
+                        DocumentsContract.getTreeDocumentId(safUri)
+                    )
+                    val docUri = DocumentsContract.createDocument(
+                        context.contentResolver,
+                        treeDocumentUri,
+                        mimeType,
+                        fileName
+                    )
+
+                    if (docUri != null) {
+                        val outputOptions = ImageCapture.OutputFileOptions.Builder(
+                            context.contentResolver,
+                            docUri,
+                            ContentValues()
+                        ).build()
+
+                        imageCapture.takePicture(
+                            outputOptions,
+                            ContextCompat.getMainExecutor(context),
+                            object : ImageCapture.OnImageSavedCallback {
+                                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                                    Toast.makeText(context, "Saved to Custom SAF Folder!", Toast.LENGTH_SHORT).show()
+                                    lastThumbnail = loadThumbnailFromUri(context, docUri)
+                                }
+
+                                override fun onError(exc: ImageCaptureException) {
+                                    Toast.makeText(context, "Failed: ${exc.message}", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
+                    } else {
+                        Toast.makeText(context, "Failed to create document in custom folder", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(context, "SAF Error: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
-        )
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // Camera Feed Preview
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
@@ -159,10 +307,11 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize()
         )
 
+        // Top Control Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 40.dp, start = 12.dp, end = 12.dp),
+                .padding(top = 40.dp, start = 8.dp, end = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -170,6 +319,12 @@ fun CameraScreen(
                 Text("Back")
             }
 
+            // Settings Button
+            Button(onClick = { showSettingsDialog = true }) {
+                Text("Settings")
+            }
+
+            // Flash Toggle
             Button(
                 onClick = {
                     val hasFlash = camera?.cameraInfo?.hasFlashUnit() == true
@@ -192,6 +347,7 @@ fun CameraScreen(
                 Text(flashText)
             }
 
+            // Camera Switch
             Button(
                 onClick = {
                     lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
@@ -205,13 +361,13 @@ fun CameraScreen(
             }
         }
 
+        // Bottom Controls Bar (Thumbnail & Capture Button)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 40.dp, start = 24.dp, end = 24.dp)
         ) {
-            // Clickable Thumbnail Box
             Box(
                 modifier = Modifier
                     .size(60.dp)
@@ -255,6 +411,140 @@ fun CameraScreen(
             }
         }
     }
+
+    // Settings Modal Dialog
+    if (showSettingsDialog) {
+        Dialog(onDismissRequest = { showSettingsDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFF1E1E1E),
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = "Camera Settings",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 1. Save Location Options
+                    Text("Save Location:", color = Color(0xFFFF1493), fontWeight = FontWeight.SemiBold)
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = (saveLocationType == SaveLocationType.PUBLIC_CAMCRAFT),
+                            onClick = { saveLocationType = SaveLocationType.PUBLIC_CAMCRAFT }
+                        )
+                        Text("Public (Pictures/CamCraft)", color = Color.White, fontSize = 14.sp)
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = (saveLocationType == SaveLocationType.PRIVATE_INTERNAL),
+                            onClick = { saveLocationType = SaveLocationType.PRIVATE_INTERNAL }
+                        )
+                        Text("Private (App Folder)", color = Color.White, fontSize = 14.sp)
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = (saveLocationType == SaveLocationType.CUSTOM_SAF),
+                            onClick = {
+                                if (customSafUri == null) {
+                                    safFolderPickerLauncher.launch(null)
+                                } else {
+                                    saveLocationType = SaveLocationType.CUSTOM_SAF
+                                }
+                            }
+                        )
+                        Text("Custom Folder (SAF)", color = Color.White, fontSize = 14.sp)
+                    }
+
+                    if (saveLocationType == SaveLocationType.CUSTOM_SAF || customSafUri != null) {
+                        Button(
+                            onClick = { safFolderPickerLauncher.launch(null) },
+                            modifier = Modifier.padding(start = 32.dp, top = 4.dp)
+                        ) {
+                            Text(if (customSafUri != null) "Change Folder" else "Pick Folder")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 2. Image Format Options
+                    Text("Image Format:", color = Color(0xFFFF1493), fontWeight = FontWeight.SemiBold)
+                    Row {
+                        Button(
+                            onClick = { selectedFormat = ImageFormatType.JPEG },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selectedFormat == ImageFormatType.JPEG) Color(0xFFFF1493) else Color.Gray
+                            ),
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Text("JPEG")
+                        }
+                        Button(
+                            onClick = { selectedFormat = ImageFormatType.PNG },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selectedFormat == ImageFormatType.PNG) Color(0xFFFF1493) else Color.Gray
+                            )
+                        ) {
+                            Text("PNG")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 3. Resolution Options
+                    Text("Resolution:", color = Color(0xFFFF1493), fontWeight = FontWeight.SemiBold)
+                    Row {
+                        Button(
+                            onClick = { selectedResolution = ResolutionType.HIGH },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selectedResolution == ResolutionType.HIGH) Color(0xFFFF1493) else Color.Gray
+                            ),
+                            modifier = Modifier.padding(end = 4.dp)
+                        ) {
+                            Text("High")
+                        }
+                        Button(
+                            onClick = { selectedResolution = ResolutionType.MEDIUM },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selectedResolution == ResolutionType.MEDIUM) Color(0xFFFF1493) else Color.Gray
+                            ),
+                            modifier = Modifier.padding(end = 4.dp)
+                        ) {
+                            Text("Med")
+                        }
+                        Button(
+                            onClick = { selectedResolution = ResolutionType.LOW },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selectedResolution == ResolutionType.LOW) Color(0xFFFF1493) else Color.Gray
+                            )
+                        ) {
+                            Text("Low")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Button(
+                        onClick = { showSettingsDialog = false },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Done")
+                    }
+                }
+            }
+        }
+    }
 }
 
 private fun fetchLatestImageUri(context: Context): Uri? {
@@ -291,7 +581,7 @@ private fun fetchLatestImageUri(context: Context): Uri? {
 private fun loadThumbnailFromUri(context: Context, uri: Uri): ImageBitmap? {
     return try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            context.contentResolver.loadThumbnail(uri, android.util.Size(120, 120), null).asImageBitmap()
+            context.contentResolver.loadThumbnail(uri, Size(120, 120), null).asImageBitmap()
         } else {
             @Suppress("DEPRECATION")
             val bitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, uri)

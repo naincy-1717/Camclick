@@ -68,7 +68,8 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.padding(innerPadding)
                         )
                         "camera" -> CameraScreen(
-                            onBackClick = { currentScreen = "landing" }
+                            onBackClick = { currentScreen = "landing" },
+                            onGalleryClick = { currentScreen = "gallery" }
                         )
                         "gallery" -> GalleryScreen(
                             onBackClick = { currentScreen = "landing" }
