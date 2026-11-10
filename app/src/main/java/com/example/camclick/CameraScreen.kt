@@ -35,17 +35,18 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.text.SimpleDateFormat
 import java.util.Locale
-import androidx.compose.ui.unit.sp
 
 @Composable
 fun CameraScreen(
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onGalleryClick: () -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -56,7 +57,6 @@ fun CameraScreen(
     var camera by remember { mutableStateOf<Camera?>(null) }
     var lastThumbnail by remember { mutableStateOf<ImageBitmap?>(null) }
 
-    // Load the most recent photo thumbnail from MediaStore on screen open
     LaunchedEffect(Unit) {
         val latestUri = fetchLatestImageUri(context)
         latestUri?.let { uri ->
@@ -64,7 +64,6 @@ fun CameraScreen(
         }
     }
 
-    // ImageCapture use case
     val imageCapture = remember {
         ImageCapture.Builder()
             .setFlashMode(flashMode)
@@ -75,7 +74,6 @@ fun CameraScreen(
         imageCapture.flashMode = flashMode
     }
 
-    // Bind camera lifecycle
     LaunchedEffect(lensFacing, previewView) {
         val currentPreviewView = previewView ?: return@LaunchedEffect
 
@@ -109,7 +107,6 @@ fun CameraScreen(
         }, ContextCompat.getMainExecutor(context))
     }
 
-    // Helper function to capture photo and update thumbnail
     fun takePhoto() {
         val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
             .format(System.currentTimeMillis())
@@ -147,7 +144,6 @@ fun CameraScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Camera Preview
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
@@ -163,7 +159,6 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Top Control Bar Overlay
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -210,21 +205,21 @@ fun CameraScreen(
             }
         }
 
-        // Bottom Controls Bar (Thumbnail on left, Shutter in center)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 40.dp, start = 24.dp, end = 24.dp)
         ) {
-            // Last Image Thumbnail (Bottom Left)
+            // Clickable Thumbnail Box
             Box(
                 modifier = Modifier
                     .size(60.dp)
                     .align(Alignment.CenterStart)
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color.DarkGray)
-                    .border(BorderStroke(2.dp, Color.White), RoundedCornerShape(12.dp)),
+                    .border(BorderStroke(2.dp, Color.White), RoundedCornerShape(12.dp))
+                    .clickable { onGalleryClick() },
                 contentAlignment = Alignment.Center
             ) {
                 lastThumbnail?.let { bitmap ->
@@ -241,7 +236,6 @@ fun CameraScreen(
                 )
             }
 
-            // Capture Shutter Button (Center)
             Box(
                 modifier = Modifier
                     .size(80.dp)
@@ -263,7 +257,6 @@ fun CameraScreen(
     }
 }
 
-// Helper function to query the latest saved photo from Pictures/CamCraft
 private fun fetchLatestImageUri(context: Context): Uri? {
     val projection = arrayOf(MediaStore.Images.Media._ID)
     val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -295,7 +288,6 @@ private fun fetchLatestImageUri(context: Context): Uri? {
     }
 }
 
-// Helper function to load a scaled-down thumbnail bitmap from URI
 private fun loadThumbnailFromUri(context: Context, uri: Uri): ImageBitmap? {
     return try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
