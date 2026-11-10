@@ -24,6 +24,9 @@ fun CameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // State to track selected camera (defaults to back camera)
+    var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
+
     Box(modifier = Modifier.fillMaxSize()) {
         // CameraX Live Preview View
         AndroidView(
@@ -44,7 +47,10 @@ fun CameraScreen(
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
 
-                    val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                    // Dynamically set camera based on lensFacing state
+                    val cameraSelector = CameraSelector.Builder()
+                        .requireLensFacing(lensFacing)
+                        .build()
 
                     try {
                         cameraProvider.unbindAll()
@@ -61,14 +67,31 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Back Button overlay on top of camera preview
-        Button(
-            onClick = onBackClick,
+        // Top Control Bar Overlay
+        Row(
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(top = 40.dp, start = 16.dp)
+                .fillMaxWidth()
+                .padding(top = 40.dp, start = 16.dp, end = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Back")
+            // Back Button
+            Button(onClick = onBackClick) {
+                Text("Back")
+            }
+
+            // Switch Camera Toggle Button
+            Button(
+                onClick = {
+                    lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+                        CameraSelector.LENS_FACING_FRONT
+                    } else {
+                        CameraSelector.LENS_FACING_BACK
+                    }
+                }
+            ) {
+                Text(if (lensFacing == CameraSelector.LENS_FACING_BACK) "Front Cam" else "Back Cam")
+            }
         }
     }
 }
