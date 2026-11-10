@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,7 +32,8 @@ import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun GalleryScreen(
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onEditImageClick: (Uri) -> Unit
 ) {
     val context = LocalContext.current
     var imageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
@@ -123,14 +125,29 @@ fun GalleryScreen(
                     )
                 }
 
-                // Close button on top left of full view
-                Button(
-                    onClick = { selectedImageUri = null },
+                // Top Control Bar on Full View (Close & Edit Buttons)
+                Row(
                     modifier = Modifier
-                        .padding(top = 40.dp, start = 16.dp)
-                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .padding(top = 40.dp, start = 16.dp, end = 16.dp)
+                        .align(Alignment.TopStart),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Close")
+                    Button(onClick = { selectedImageUri = null }) {
+                        Text("Close")
+                    }
+
+                    Button(
+                        onClick = {
+                            val uriToEdit = uri
+                            selectedImageUri = null
+                            onEditImageClick(uriToEdit)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF1493))
+                    ) {
+                        Text("Edit & Details", color = Color.White)
+                    }
                 }
             }
         }

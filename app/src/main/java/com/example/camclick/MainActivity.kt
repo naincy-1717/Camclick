@@ -2,13 +2,14 @@ package com.example.camclick
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -35,6 +36,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             CamclickTheme {
                 var currentScreen by remember { mutableStateOf("landing") }
+                var selectedImageUriForEditing by remember { mutableStateOf<Uri?>(null) }
                 val context = LocalContext.current
 
                 val cameraPermissionLauncher = rememberLauncherForActivityResult(
@@ -72,8 +74,18 @@ class MainActivity : ComponentActivity() {
                             onGalleryClick = { currentScreen = "gallery" }
                         )
                         "gallery" -> GalleryScreen(
-                            onBackClick = { currentScreen = "landing" }
+                            onBackClick = { currentScreen = "landing" },
+                            onEditImageClick = { uri ->
+                                selectedImageUriForEditing = uri
+                                currentScreen = "edit"
+                            }
                         )
+                        "edit" -> selectedImageUriForEditing?.let { uri ->
+                            EditImageScreen(
+                                imageUri = uri,
+                                onBackClick = { currentScreen = "gallery" }
+                            )
+                        }
                     }
                 }
             }
