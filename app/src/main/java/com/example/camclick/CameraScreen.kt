@@ -93,6 +93,10 @@ fun CameraScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
 
+    // Pastel Theme Colors
+    val pastelPink = Color(0xFFFFB6C1)
+    val darkRose = Color(0xFFC71585)
+
     // Camera & Flash States
     var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
     var flashMode by remember { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
@@ -104,13 +108,13 @@ fun CameraScreen(
     var isMenuExpanded by remember { mutableStateOf(false) }
 
     // Add-On Features States
-    var isDarkMode by remember { mutableStateOf(true) } // Light/Dark Theme toggle
-    var isGridEnabled by remember { mutableStateOf(false) } // Framing Grid Overlay
-    var timerSeconds by remember { mutableIntStateOf(0) } // Self-Timer (0, 3, 5, 10s)
+    var isDarkMode by remember { mutableStateOf(true) }
+    var isGridEnabled by remember { mutableStateOf(false) }
+    var timerSeconds by remember { mutableIntStateOf(0) }
     var countdownState by remember { mutableIntStateOf(0) }
     var isTimerRunning by remember { mutableStateOf(false) }
-    var isBurstMode by remember { mutableStateOf(false) } // Burst Mode (5 Shots)
-    var isGeotagEnabled by remember { mutableStateOf(false) } // GPS Geotagging
+    var isBurstMode by remember { mutableStateOf(false) }
+    var isGeotagEnabled by remember { mutableStateOf(false) }
 
     // Settings States
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -233,7 +237,6 @@ fun CameraScreen(
         val mimeType = if (selectedFormat == ImageFormatType.JPEG) "image/jpeg" else "image/png"
         val fileName = "CamCraft_$timeStamp$shotSuffix.$extension"
 
-        // Attach Location Metadata if enabled
         val metadata = ImageCapture.Metadata().apply {
             location = getCurrentLocation()
         }
@@ -351,7 +354,6 @@ fun CameraScreen(
         if (isTimerRunning) return
 
         coroutineScope.launch {
-            // Step 1: Timer Countdown
             if (timerSeconds > 0) {
                 isTimerRunning = true
                 for (i in timerSeconds downTo 1) {
@@ -362,21 +364,18 @@ fun CameraScreen(
                 isTimerRunning = false
             }
 
-            // Step 2: Burst Mode or Single Shot
             val totalShots = if (isBurstMode) 5 else 1
             for (shotIndex in 1..totalShots) {
                 val suffix = if (isBurstMode) "_Burst_$shotIndex" else ""
                 executeSingleCapture(suffix)
                 if (isBurstMode && shotIndex < totalShots) {
-                    delay(500L) // Half-second pause between burst shots
+                    delay(500L)
                 }
             }
         }
     }
 
-    // Dynamic Colors for Theme Toggle
     val panelBgColor = if (isDarkMode) Color.Black.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.95f)
-    val panelTextColor = if (isDarkMode) Color.White else Color.Black
 
     Box(modifier = Modifier.fillMaxSize()) {
         // 1. Camera Live Feed
@@ -418,13 +417,13 @@ fun CameraScreen(
             Button(
                 onClick = { isMenuExpanded = !isMenuExpanded },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isMenuExpanded) Color(0xFFFF1493) else Color.Black.copy(alpha = 0.6f)
+                    containerColor = if (isMenuExpanded) pastelPink else Color.Black.copy(alpha = 0.6f),
+                    contentColor = if (isMenuExpanded) darkRose else Color.White
                 ),
                 border = BorderStroke(1.5.dp, Color.White)
             ) {
                 Text(
                     text = if (isMenuExpanded) "✕ Close Features" else "⚡ Controls Menu",
-                    color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -442,7 +441,7 @@ fun CameraScreen(
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = panelBgColor,
-                border = BorderStroke(2.dp, Color(0xFFFF1493)),
+                border = BorderStroke(2.dp, pastelPink),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -451,7 +450,7 @@ fun CameraScreen(
                 ) {
                     Text(
                         text = "Camera Controls & Add-Ons",
-                        color = Color(0xFFFF1493),
+                        color = darkRose,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -508,7 +507,8 @@ fun CameraScreen(
                         Button(
                             onClick = { isGridEnabled = !isGridEnabled },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isGridEnabled) Color(0xFFFF1493) else Color.DarkGray
+                                containerColor = if (isGridEnabled) pastelPink else Color.DarkGray,
+                                contentColor = if (isGridEnabled) darkRose else Color.White
                             )
                         ) {
                             Text(if (isGridEnabled) "📐 Grid: ON" else "📐 Grid: OFF")
@@ -524,7 +524,8 @@ fun CameraScreen(
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (timerSeconds > 0) Color(0xFFFF1493) else Color.DarkGray
+                                containerColor = if (timerSeconds > 0) pastelPink else Color.DarkGray,
+                                contentColor = if (timerSeconds > 0) darkRose else Color.White
                             )
                         ) {
                             Text(if (timerSeconds > 0) "⏱️ Timer: ${timerSeconds}s" else "⏱️ Timer: OFF")
@@ -541,7 +542,8 @@ fun CameraScreen(
                         Button(
                             onClick = { isBurstMode = !isBurstMode },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isBurstMode) Color(0xFFFF1493) else Color.DarkGray
+                                containerColor = if (isBurstMode) pastelPink else Color.DarkGray,
+                                contentColor = if (isBurstMode) darkRose else Color.White
                             )
                         ) {
                             Text(if (isBurstMode) "💥 Burst (5x): ON" else "💥 Burst: OFF")
@@ -562,7 +564,8 @@ fun CameraScreen(
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isGeotagEnabled) Color(0xFFFF1493) else Color.DarkGray
+                                containerColor = if (isGeotagEnabled) pastelPink else Color.DarkGray,
+                                contentColor = if (isGeotagEnabled) darkRose else Color.White
                             )
                         ) {
                             Text(if (isGeotagEnabled) "🌍 GPS: ON" else "🌍 GPS: OFF")
@@ -597,7 +600,7 @@ fun CameraScreen(
             }
         }
 
-        // 6. Bottom Controls Bar (Thumbnail & Shutter Button)
+        // 6. Bottom Controls Bar (Thumbnail & Pastel Inner Shutter Button)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -628,13 +631,14 @@ fun CameraScreen(
                 )
             }
 
+            // Shutter Button with Pastel Pink Inner Circle and Outer Border
             Box(
                 modifier = Modifier
                     .size(80.dp)
                     .align(Alignment.Center)
                     .clip(CircleShape)
                     .background(Color.White)
-                    .border(BorderStroke(4.dp, Color(0xFFFF1493)), CircleShape)
+                    .border(BorderStroke(4.dp, pastelPink), CircleShape)
                     .clickable { onShutterClick() },
                 contentAlignment = Alignment.Center
             ) {
@@ -642,7 +646,7 @@ fun CameraScreen(
                     modifier = Modifier
                         .size(60.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFFFF1493))
+                        .background(pastelPink)
                 )
             }
         }
@@ -670,7 +674,7 @@ fun CameraScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Text("Save Location:", color = Color(0xFFFF1493), fontWeight = FontWeight.SemiBold)
+                    Text("Save Location:", color = pastelPink, fontWeight = FontWeight.SemiBold)
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(
@@ -713,12 +717,13 @@ fun CameraScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Text("Image Format:", color = Color(0xFFFF1493), fontWeight = FontWeight.SemiBold)
+                    Text("Image Format:", color = pastelPink, fontWeight = FontWeight.SemiBold)
                     Row {
                         Button(
                             onClick = { selectedFormat = ImageFormatType.JPEG },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (selectedFormat == ImageFormatType.JPEG) Color(0xFFFF1493) else Color.Gray
+                                containerColor = if (selectedFormat == ImageFormatType.JPEG) pastelPink else Color.Gray,
+                                contentColor = if (selectedFormat == ImageFormatType.JPEG) darkRose else Color.White
                             ),
                             modifier = Modifier.padding(end = 8.dp)
                         ) {
@@ -727,7 +732,8 @@ fun CameraScreen(
                         Button(
                             onClick = { selectedFormat = ImageFormatType.PNG },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (selectedFormat == ImageFormatType.PNG) Color(0xFFFF1493) else Color.Gray
+                                containerColor = if (selectedFormat == ImageFormatType.PNG) pastelPink else Color.Gray,
+                                contentColor = if (selectedFormat == ImageFormatType.PNG) darkRose else Color.White
                             )
                         ) {
                             Text("PNG")
@@ -736,12 +742,13 @@ fun CameraScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Text("Resolution:", color = Color(0xFFFF1493), fontWeight = FontWeight.SemiBold)
+                    Text("Resolution:", color = pastelPink, fontWeight = FontWeight.SemiBold)
                     Row {
                         Button(
                             onClick = { selectedResolution = ResolutionType.HIGH },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (selectedResolution == ResolutionType.HIGH) Color(0xFFFF1493) else Color.Gray
+                                containerColor = if (selectedResolution == ResolutionType.HIGH) pastelPink else Color.Gray,
+                                contentColor = if (selectedResolution == ResolutionType.HIGH) darkRose else Color.White
                             ),
                             modifier = Modifier.padding(end = 4.dp)
                         ) {
@@ -750,7 +757,8 @@ fun CameraScreen(
                         Button(
                             onClick = { selectedResolution = ResolutionType.MEDIUM },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (selectedResolution == ResolutionType.MEDIUM) Color(0xFFFF1493) else Color.Gray
+                                containerColor = if (selectedResolution == ResolutionType.MEDIUM) pastelPink else Color.Gray,
+                                contentColor = if (selectedResolution == ResolutionType.MEDIUM) darkRose else Color.White
                             ),
                             modifier = Modifier.padding(end = 4.dp)
                         ) {
@@ -759,7 +767,8 @@ fun CameraScreen(
                         Button(
                             onClick = { selectedResolution = ResolutionType.LOW },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (selectedResolution == ResolutionType.LOW) Color(0xFFFF1493) else Color.Gray
+                                containerColor = if (selectedResolution == ResolutionType.LOW) pastelPink else Color.Gray,
+                                contentColor = if (selectedResolution == ResolutionType.LOW) darkRose else Color.White
                             )
                         ) {
                             Text("Low")
