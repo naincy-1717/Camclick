@@ -22,6 +22,11 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -45,32 +50,33 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
 
-// Save Location Types
 enum class SaveLocationType {
-    PUBLIC_CAMCRAFT, // Default MediaStore > Pictures > CamCraft
-    PRIVATE_INTERNAL, // Private App Folder (filesDir)
-    CUSTOM_SAF        // User selected folder via SAF
+    PUBLIC_CAMCRAFT,
+    PRIVATE_INTERNAL,
+    CUSTOM_SAF
 }
 
-// Image Format Types
 enum class ImageFormatType {
     JPEG,
     PNG
 }
 
-// Resolution Quality Types
 enum class ResolutionType {
-    HIGH,   // 1920x1080
-    MEDIUM, // 1280x720
-    LOW     // 640x480
+    HIGH,
+    MEDIUM,
+    LOW
 }
 
 @Composable
@@ -80,6 +86,7 @@ fun CameraScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = rememberCoroutineScope()
 
     // Camera & Flash states
     var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
@@ -88,6 +95,15 @@ fun CameraScreen(
     var camera by remember { mutableStateOf<Camera?>(null) }
     var lastThumbnail by remember { mutableStateOf<ImageBitmap?>(null) }
 
+    // Controls Menu Expandable State
+    var isMenuExpanded by remember { mutableStateOf(false) }
+
+    // Grid & Timer States
+    var isGridEnabled by remember { mutableStateOf(false) }
+    var timerSeconds by remember { mutableIntStateOf(0) }
+    var countdownState by remember { mutableIntStateOf(0) }
+    var isTimerRunning by remember { mutableStateOf(false) }
+
     // Settings States
     var showSettingsDialog by remember { mutableStateOf(false) }
     var saveLocationType by remember { mutableStateOf(SaveLocationType.PUBLIC_CAMCRAFT) }
@@ -95,12 +111,11 @@ fun CameraScreen(
     var selectedFormat by remember { mutableStateOf(ImageFormatType.JPEG) }
     var selectedResolution by remember { mutableStateOf(ResolutionType.HIGH) }
 
-    // Launcher for Storage Access Framework (SAF) folder picker
+    // Storage Access Framework (SAF) launcher
     val safFolderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         if (uri != null) {
-            // Persist permission for selected folder
             context.contentResolver.takePersistableUriPermission(
                 uri,
                 android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -118,7 +133,7 @@ fun CameraScreen(
         }
     }
 
-    // Build ImageCapture based on selected settings
+    // Dynamic ImageCapture configuration
     val imageCapture = remember(selectedFormat, selectedResolution, flashMode) {
         val targetSize = when (selectedResolution) {
             ResolutionType.HIGH -> Size(1920, 1080)
@@ -172,8 +187,8 @@ fun CameraScreen(
         }, ContextCompat.getMainExecutor(context))
     }
 
-    // Capture & Save Logic based on Save Location and Image Format
-    fun takePhoto() {
+    // Photo Capture Logic
+    fun executeCapture() {
         val timeStamp = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
         val extension = if (selectedFormat == ImageFormatType.JPEG) "jpg" else "png"
         val mimeType = if (selectedFormat == ImageFormatType.JPEG) "image/jpeg" else "image/png"
@@ -181,7 +196,6 @@ fun CameraScreen(
 
         when (saveLocationType) {
             SaveLocationType.PUBLIC_CAMCRAFT -> {
-                // Save to MediaStore > Pictures > CamCraft
                 val contentValues = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                     put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
@@ -215,7 +229,6 @@ fun CameraScreen(
             }
 
             SaveLocationType.PRIVATE_INTERNAL -> {
-                // Save to Internal App Private Storage (filesDir/CamCraft)
                 val internalFolder = File(context.filesDir, "CamCraft")
                 if (!internalFolder.exists()) internalFolder.mkdirs()
 
@@ -240,10 +253,9 @@ fun CameraScreen(
             }
 
             SaveLocationType.CUSTOM_SAF -> {
-                // Save to Custom SAF Selected Folder
                 val safUri = customSafUri
                 if (safUri == null) {
-                    Toast.makeText(context, "Please select a custom folder first in settings!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Select a custom folder in settings first!", Toast.LENGTH_SHORT).show()
                     return
                 }
 
@@ -280,8 +292,6 @@ fun CameraScreen(
                                 }
                             }
                         )
-                    } else {
-                        Toast.makeText(context, "Failed to create document in custom folder", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
                     Toast.makeText(context, "SAF Error: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -290,8 +300,28 @@ fun CameraScreen(
         }
     }
 
+    // Self-Timer Countdown Trigger
+    fun onShutterClick() {
+        if (isTimerRunning) return
+
+        if (timerSeconds > 0) {
+            coroutineScope.launch {
+                isTimerRunning = true
+                for (i in timerSeconds downTo 1) {
+                    countdownState = i
+                    delay(1000L)
+                }
+                countdownState = 0
+                isTimerRunning = false
+                executeCapture()
+            }
+        } else {
+            executeCapture()
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
-        // Camera Feed Preview
+        // 1. Camera Preview Feed
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
@@ -307,11 +337,19 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Top Control Bar
+        // 2. Rule of Thirds Grid Overlay
+        if (isGridEnabled) {
+            GridOverlay()
+        }
+
+        // 3. Countdown Timer Overlay
+        CountdownOverlay(secondsLeft = countdownState)
+
+        // 4. Top Action Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 40.dp, start = 8.dp, end = 8.dp),
+                .padding(top = 40.dp, start = 16.dp, end = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -319,55 +357,152 @@ fun CameraScreen(
                 Text("Back")
             }
 
-            // Settings Button
-            Button(onClick = { showSettingsDialog = true }) {
-                Text("Settings")
-            }
-
-            // Flash Toggle
+            // Central Quick Controls Master Button
             Button(
-                onClick = {
-                    val hasFlash = camera?.cameraInfo?.hasFlashUnit() == true
-                    if (!hasFlash) {
-                        Toast.makeText(context, "Flash not available", Toast.LENGTH_SHORT).show()
-                    } else {
-                        flashMode = when (flashMode) {
-                            ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_ON
-                            ImageCapture.FLASH_MODE_ON -> ImageCapture.FLASH_MODE_AUTO
-                            else -> ImageCapture.FLASH_MODE_OFF
-                        }
-                    }
-                }
+                onClick = { isMenuExpanded = !isMenuExpanded },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isMenuExpanded) Color(0xFFFF1493) else Color.Black.copy(alpha = 0.6f)
+                ),
+                border = BorderStroke(1.5.dp, Color.White)
             ) {
-                val flashText = when (flashMode) {
-                    ImageCapture.FLASH_MODE_ON -> "Flash: ON"
-                    ImageCapture.FLASH_MODE_AUTO -> "Flash: AUTO"
-                    else -> "Flash: OFF"
-                }
-                Text(flashText)
-            }
-
-            // Camera Switch
-            Button(
-                onClick = {
-                    lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
-                        CameraSelector.LENS_FACING_FRONT
-                    } else {
-                        CameraSelector.LENS_FACING_BACK
-                    }
-                }
-            ) {
-                Text(if (lensFacing == CameraSelector.LENS_FACING_BACK) "Front" else "Back")
+                Text(
+                    text = if (isMenuExpanded) "✕ Close Features" else "⚡ Controls Menu",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
-        // Bottom Controls Bar (Thumbnail & Capture Button)
+        // 5. Expandable Features Menu Panel
+        AnimatedVisibility(
+            visible = isMenuExpanded,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 95.dp, start = 20.dp, end = 20.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = 0.85f),
+                border = BorderStroke(2.dp, Color(0xFFFF1493)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Camera Options",
+                        color = Color(0xFFFF1493),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Row 1: Front/Back & Flash
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        // Switch Camera Button
+                        Button(
+                            onClick = {
+                                lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+                                    CameraSelector.LENS_FACING_FRONT
+                                } else {
+                                    CameraSelector.LENS_FACING_BACK
+                                }
+                            }
+                        ) {
+                            Text(if (lensFacing == CameraSelector.LENS_FACING_BACK) "📷 Front Cam" else "📷 Back Cam")
+                        }
+
+                        // Flash Toggle Button
+                        Button(
+                            onClick = {
+                                val hasFlash = camera?.cameraInfo?.hasFlashUnit() == true
+                                if (!hasFlash) {
+                                    Toast.makeText(context, "Flash not available", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    flashMode = when (flashMode) {
+                                        ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_ON
+                                        ImageCapture.FLASH_MODE_ON -> ImageCapture.FLASH_MODE_AUTO
+                                        else -> ImageCapture.FLASH_MODE_OFF
+                                    }
+                                }
+                            }
+                        ) {
+                            val flashText = when (flashMode) {
+                                ImageCapture.FLASH_MODE_ON -> "⚡ Flash: ON"
+                                ImageCapture.FLASH_MODE_AUTO -> "⚡ Flash: AUTO"
+                                else -> "⚡ Flash: OFF"
+                            }
+                            Text(flashText)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Row 2: Grid & Timer
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        // Grid Button
+                        Button(
+                            onClick = { isGridEnabled = !isGridEnabled },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isGridEnabled) Color(0xFFFF1493) else Color.DarkGray
+                            )
+                        ) {
+                            Text(if (isGridEnabled) "📐 Grid: ON" else "📐 Grid: OFF")
+                        }
+
+                        // Self Timer Button
+                        Button(
+                            onClick = {
+                                timerSeconds = when (timerSeconds) {
+                                    0 -> 3
+                                    3 -> 5
+                                    5 -> 10
+                                    else -> 0
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (timerSeconds > 0) Color(0xFFFF1493) else Color.DarkGray
+                            )
+                        ) {
+                            Text(if (timerSeconds > 0) "⏱️ Timer: ${timerSeconds}s" else "⏱️ Timer: OFF")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Row 3: Settings Dialog Launcher
+                    Button(
+                        onClick = {
+                            isMenuExpanded = false
+                            showSettingsDialog = true
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+                        modifier = Modifier.fillMaxWidth(0.9f)
+                    ) {
+                        Text("⚙️ Advanced Settings (Format, Resolution, Storage)")
+                    }
+                }
+            }
+        }
+
+        // 6. Bottom Controls Bar (Thumbnail & Shutter Button)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 40.dp, start = 24.dp, end = 24.dp)
         ) {
+            // Thumbnail Preview (Bottom-Left)
             Box(
                 modifier = Modifier
                     .size(60.dp)
@@ -392,6 +527,7 @@ fun CameraScreen(
                 )
             }
 
+            // Shutter Capture Button (Center)
             Box(
                 modifier = Modifier
                     .size(80.dp)
@@ -399,7 +535,7 @@ fun CameraScreen(
                     .clip(CircleShape)
                     .background(Color.White)
                     .border(BorderStroke(4.dp, Color(0xFFFF1493)), CircleShape)
-                    .clickable { takePhoto() },
+                    .clickable { onShutterClick() },
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -412,7 +548,7 @@ fun CameraScreen(
         }
     }
 
-    // Settings Modal Dialog
+    // Camera Settings Dialog
     if (showSettingsDialog) {
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
             Surface(
@@ -434,7 +570,6 @@ fun CameraScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // 1. Save Location Options
                     Text("Save Location:", color = Color(0xFFFF1493), fontWeight = FontWeight.SemiBold)
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -478,7 +613,6 @@ fun CameraScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // 2. Image Format Options
                     Text("Image Format:", color = Color(0xFFFF1493), fontWeight = FontWeight.SemiBold)
                     Row {
                         Button(
@@ -502,7 +636,6 @@ fun CameraScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // 3. Resolution Options
                     Text("Resolution:", color = Color(0xFFFF1493), fontWeight = FontWeight.SemiBold)
                     Row {
                         Button(
@@ -589,5 +722,75 @@ private fun loadThumbnailFromUri(context: Context, uri: Uri): ImageBitmap? {
         }
     } catch (e: Exception) {
         null
+    }
+}
+
+// Rule-of-Thirds 3x3 Grid Overlay Composable
+@Composable
+fun GridOverlay(
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier.fillMaxSize()) {
+        val width = size.width
+        val height = size.height
+
+        val firstVertical = width / 3
+        val secondVertical = (width / 3) * 2
+
+        val firstHorizontal = height / 3
+        val secondHorizontal = (height / 3) * 2
+
+        val strokeWidth = 1.dp.toPx()
+        val gridColor = Color.White.copy(alpha = 0.4f)
+
+        // Draw Vertical Grid Lines
+        drawLine(
+            color = gridColor,
+            start = Offset(firstVertical, 0f),
+            end = Offset(firstVertical, height),
+            strokeWidth = strokeWidth
+        )
+        drawLine(
+            color = gridColor,
+            start = Offset(secondVertical, 0f),
+            end = Offset(secondVertical, height),
+            strokeWidth = strokeWidth
+        )
+
+        // Draw Horizontal Grid Lines
+        drawLine(
+            color = gridColor,
+            start = Offset(0f, firstHorizontal),
+            end = Offset(width, firstHorizontal),
+            strokeWidth = strokeWidth
+        )
+        drawLine(
+            color = gridColor,
+            start = Offset(0f, secondHorizontal),
+            end = Offset(width, secondHorizontal),
+            strokeWidth = strokeWidth
+        )
+    }
+}
+
+// Visual Countdown Overlay Composable
+@Composable
+fun CountdownOverlay(
+    secondsLeft: Int
+) {
+    if (secondsLeft > 0) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.3f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "$secondsLeft",
+                color = Color.White,
+                fontSize = 96.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
