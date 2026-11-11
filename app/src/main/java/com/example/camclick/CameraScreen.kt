@@ -1,9 +1,13 @@
 package com.example.camclick
 
+import android.Manifest
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.location.Location
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
@@ -28,6 +32,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,6 +47,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -59,9 +65,8 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
-import androidx.compose.foundation.Canvas
-import androidx.compose.ui.geometry.Offset
 
+// Enum Definitions
 enum class SaveLocationType {
     PUBLIC_CAMCRAFT,
     PRIVATE_INTERNAL,
@@ -88,21 +93,24 @@ fun CameraScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
 
-    // Camera & Flash states
+    // Camera & Flash States
     var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
     var flashMode by remember { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var lastThumbnail by remember { mutableStateOf<ImageBitmap?>(null) }
 
-    // Controls Menu Expandable State
+    // Expandable Menu State
     var isMenuExpanded by remember { mutableStateOf(false) }
 
-    // Grid & Timer States
-    var isGridEnabled by remember { mutableStateOf(false) }
-    var timerSeconds by remember { mutableIntStateOf(0) }
+    // Add-On Features States
+    var isDarkMode by remember { mutableStateOf(true) } // Light/Dark Theme toggle
+    var isGridEnabled by remember { mutableStateOf(false) } // Framing Grid Overlay
+    var timerSeconds by remember { mutableIntStateOf(0) } // Self-Timer (0, 3, 5, 10s)
     var countdownState by remember { mutableIntStateOf(0) }
     var isTimerRunning by remember { mutableStateOf(false) }
+    var isBurstMode by remember { mutableStateOf(false) } // Burst Mode (5 Shots)
+    var isGeotagEnabled by remember { mutableStateOf(false) } // GPS Geotagging
 
     // Settings States
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -111,7 +119,7 @@ fun CameraScreen(
     var selectedFormat by remember { mutableStateOf(ImageFormatType.JPEG) }
     var selectedResolution by remember { mutableStateOf(ResolutionType.HIGH) }
 
-    // Storage Access Framework (SAF) launcher
+    // SAF Folder Picker Launcher
     val safFolderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -123,6 +131,21 @@ fun CameraScreen(
             customSafUri = uri
             saveLocationType = SaveLocationType.CUSTOM_SAF
             Toast.makeText(context, "Custom folder set!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // GPS Location Permission Launcher
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            isGeotagEnabled = true
+            Toast.makeText(context, "GPS Geotagging Enabled", Toast.LENGTH_SHORT).show()
+        } else {
+            isGeotagEnabled = false
+            Toast.makeText(context, "Location permission required for geotagging", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -187,12 +210,33 @@ fun CameraScreen(
         }, ContextCompat.getMainExecutor(context))
     }
 
-    // Photo Capture Logic
-    fun executeCapture() {
+    // Helper to get GPS Location
+    fun getCurrentLocation(): Location? {
+        if (!isGeotagEnabled) return null
+        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasFine && !hasCoarse) return null
+
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        return try {
+            locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // Single Photo Capture Engine
+    fun executeSingleCapture(shotSuffix: String = "") {
         val timeStamp = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
         val extension = if (selectedFormat == ImageFormatType.JPEG) "jpg" else "png"
         val mimeType = if (selectedFormat == ImageFormatType.JPEG) "image/jpeg" else "image/png"
-        val fileName = "CamCraft_$timeStamp.$extension"
+        val fileName = "CamCraft_$timeStamp$shotSuffix.$extension"
+
+        // Attach Location Metadata if enabled
+        val metadata = ImageCapture.Metadata().apply {
+            location = getCurrentLocation()
+        }
 
         when (saveLocationType) {
             SaveLocationType.PUBLIC_CAMCRAFT -> {
@@ -208,14 +252,14 @@ fun CameraScreen(
                     context.contentResolver,
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                     contentValues
-                ).build()
+                ).setMetadata(metadata).build()
 
                 imageCapture.takePicture(
                     outputOptions,
                     ContextCompat.getMainExecutor(context),
                     object : ImageCapture.OnImageSavedCallback {
                         override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                            Toast.makeText(context, "Saved to Pictures/CamCraft", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Saved photo $shotSuffix", Toast.LENGTH_SHORT).show()
                             output.savedUri?.let { uri ->
                                 lastThumbnail = loadThumbnailFromUri(context, uri)
                             }
@@ -233,14 +277,16 @@ fun CameraScreen(
                 if (!internalFolder.exists()) internalFolder.mkdirs()
 
                 val photoFile = File(internalFolder, fileName)
-                val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+                val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile)
+                    .setMetadata(metadata)
+                    .build()
 
                 imageCapture.takePicture(
                     outputOptions,
                     ContextCompat.getMainExecutor(context),
                     object : ImageCapture.OnImageSavedCallback {
                         override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                            Toast.makeText(context, "Saved to Private App Folder", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Saved to App Storage", Toast.LENGTH_SHORT).show()
                             val savedUri = Uri.fromFile(photoFile)
                             lastThumbnail = loadThumbnailFromUri(context, savedUri)
                         }
@@ -276,7 +322,7 @@ fun CameraScreen(
                             context.contentResolver,
                             docUri,
                             ContentValues()
-                        ).build()
+                        ).setMetadata(metadata).build()
 
                         imageCapture.takePicture(
                             outputOptions,
@@ -300,12 +346,13 @@ fun CameraScreen(
         }
     }
 
-    // Self-Timer Countdown Trigger
+    // Shutter Trigger (Timer + Burst Mode Logic)
     fun onShutterClick() {
         if (isTimerRunning) return
 
-        if (timerSeconds > 0) {
-            coroutineScope.launch {
+        coroutineScope.launch {
+            // Step 1: Timer Countdown
+            if (timerSeconds > 0) {
                 isTimerRunning = true
                 for (i in timerSeconds downTo 1) {
                     countdownState = i
@@ -313,15 +360,26 @@ fun CameraScreen(
                 }
                 countdownState = 0
                 isTimerRunning = false
-                executeCapture()
             }
-        } else {
-            executeCapture()
+
+            // Step 2: Burst Mode or Single Shot
+            val totalShots = if (isBurstMode) 5 else 1
+            for (shotIndex in 1..totalShots) {
+                val suffix = if (isBurstMode) "_Burst_$shotIndex" else ""
+                executeSingleCapture(suffix)
+                if (isBurstMode && shotIndex < totalShots) {
+                    delay(500L) // Half-second pause between burst shots
+                }
+            }
         }
     }
 
+    // Dynamic Colors for Theme Toggle
+    val panelBgColor = if (isDarkMode) Color.Black.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.95f)
+    val panelTextColor = if (isDarkMode) Color.White else Color.Black
+
     Box(modifier = Modifier.fillMaxSize()) {
-        // 1. Camera Preview Feed
+        // 1. Camera Live Feed
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
@@ -337,15 +395,15 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. Rule of Thirds Grid Overlay
+        // 2. Framing Grid Overlay
         if (isGridEnabled) {
             GridOverlay()
         }
 
-        // 3. Countdown Timer Overlay
+        // 3. Countdown Overlay
         CountdownOverlay(secondsLeft = countdownState)
 
-        // 4. Top Action Bar
+        // 4. Top Header Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -357,7 +415,6 @@ fun CameraScreen(
                 Text("Back")
             }
 
-            // Central Quick Controls Master Button
             Button(
                 onClick = { isMenuExpanded = !isMenuExpanded },
                 colors = ButtonDefaults.buttonColors(
@@ -373,18 +430,18 @@ fun CameraScreen(
             }
         }
 
-        // 5. Expandable Features Menu Panel
+        // 5. Expandable Controls Menu Panel
         AnimatedVisibility(
             visible = isMenuExpanded,
             enter = fadeIn() + expandVertically(),
             exit = fadeOut() + shrinkVertically(),
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 95.dp, start = 20.dp, end = 20.dp)
+                .padding(top = 95.dp, start = 16.dp, end = 16.dp)
         ) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
-                color = Color.Black.copy(alpha = 0.85f),
+                color = panelBgColor,
                 border = BorderStroke(2.dp, Color(0xFFFF1493)),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -393,7 +450,7 @@ fun CameraScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Camera Options",
+                        text = "Camera Controls & Add-Ons",
                         color = Color(0xFFFF1493),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
@@ -406,7 +463,6 @@ fun CameraScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        // Switch Camera Button
                         Button(
                             onClick = {
                                 lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
@@ -416,10 +472,9 @@ fun CameraScreen(
                                 }
                             }
                         ) {
-                            Text(if (lensFacing == CameraSelector.LENS_FACING_BACK) "📷 Front Cam" else "📷 Back Cam")
+                            Text(if (lensFacing == CameraSelector.LENS_FACING_BACK) "📷 Front" else "📷 Back")
                         }
 
-                        // Flash Toggle Button
                         Button(
                             onClick = {
                                 val hasFlash = camera?.cameraInfo?.hasFlashUnit() == true
@@ -450,7 +505,6 @@ fun CameraScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        // Grid Button
                         Button(
                             onClick = { isGridEnabled = !isGridEnabled },
                             colors = ButtonDefaults.buttonColors(
@@ -460,7 +514,6 @@ fun CameraScreen(
                             Text(if (isGridEnabled) "📐 Grid: ON" else "📐 Grid: OFF")
                         }
 
-                        // Self Timer Button
                         Button(
                             onClick = {
                                 timerSeconds = when (timerSeconds) {
@@ -480,16 +533,65 @@ fun CameraScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Row 3: Settings Dialog Launcher
-                    Button(
-                        onClick = {
-                            isMenuExpanded = false
-                            showSettingsDialog = true
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
-                        modifier = Modifier.fillMaxWidth(0.9f)
+                    // Row 3: Burst Mode & GPS Geotagging
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        Text("⚙️ Advanced Settings (Format, Resolution, Storage)")
+                        Button(
+                            onClick = { isBurstMode = !isBurstMode },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isBurstMode) Color(0xFFFF1493) else Color.DarkGray
+                            )
+                        ) {
+                            Text(if (isBurstMode) "💥 Burst (5x): ON" else "💥 Burst: OFF")
+                        }
+
+                        Button(
+                            onClick = {
+                                if (!isGeotagEnabled) {
+                                    locationPermissionLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                            Manifest.permission.ACCESS_COARSE_LOCATION
+                                        )
+                                    )
+                                } else {
+                                    isGeotagEnabled = false
+                                    Toast.makeText(context, "GPS Geotagging Disabled", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isGeotagEnabled) Color(0xFFFF1493) else Color.DarkGray
+                            )
+                        ) {
+                            Text(if (isGeotagEnabled) "🌍 GPS: ON" else "🌍 GPS: OFF")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Row 4: Theme Toggle & Advanced Settings
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Button(
+                            onClick = { isDarkMode = !isDarkMode },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF444444))
+                        ) {
+                            Text(if (isDarkMode) "🌙 Dark Mode" else "☀️ Light Mode", color = Color.White)
+                        }
+
+                        Button(
+                            onClick = {
+                                isMenuExpanded = false
+                                showSettingsDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
+                        ) {
+                            Text("⚙️ Settings", color = Color.White)
+                        }
                     }
                 }
             }
@@ -502,7 +604,6 @@ fun CameraScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 40.dp, start = 24.dp, end = 24.dp)
         ) {
-            // Thumbnail Preview (Bottom-Left)
             Box(
                 modifier = Modifier
                     .size(60.dp)
@@ -527,7 +628,6 @@ fun CameraScreen(
                 )
             }
 
-            // Shutter Capture Button (Center)
             Box(
                 modifier = Modifier
                     .size(80.dp)
@@ -548,7 +648,7 @@ fun CameraScreen(
         }
     }
 
-    // Camera Settings Dialog
+    // Camera Settings Dialog Modal
     if (showSettingsDialog) {
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
             Surface(
@@ -680,6 +780,76 @@ fun CameraScreen(
     }
 }
 
+// Rule-of-Thirds Grid Overlay Composable
+@Composable
+fun GridOverlay(
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier.fillMaxSize()) {
+        val width = size.width
+        val height = size.height
+
+        val firstVertical = width / 3
+        val secondVertical = (width / 3) * 2
+
+        val firstHorizontal = height / 3
+        val secondHorizontal = (height / 3) * 2
+
+        val strokeWidth = 1.dp.toPx()
+        val gridColor = Color.White.copy(alpha = 0.4f)
+
+        // Vertical lines
+        drawLine(
+            color = gridColor,
+            start = Offset(firstVertical, 0f),
+            end = Offset(firstVertical, height),
+            strokeWidth = strokeWidth
+        )
+        drawLine(
+            color = gridColor,
+            start = Offset(secondVertical, 0f),
+            end = Offset(secondVertical, height),
+            strokeWidth = strokeWidth
+        )
+
+        // Horizontal lines
+        drawLine(
+            color = gridColor,
+            start = Offset(0f, firstHorizontal),
+            end = Offset(width, firstHorizontal),
+            strokeWidth = strokeWidth
+        )
+        drawLine(
+            color = gridColor,
+            start = Offset(0f, secondHorizontal),
+            end = Offset(width, secondHorizontal),
+            strokeWidth = strokeWidth
+        )
+    }
+}
+
+// Visual Countdown Overlay Composable
+@Composable
+fun CountdownOverlay(
+    secondsLeft: Int
+) {
+    if (secondsLeft > 0) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.3f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "$secondsLeft",
+                color = Color.White,
+                fontSize = 96.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
 private fun fetchLatestImageUri(context: Context): Uri? {
     val projection = arrayOf(MediaStore.Images.Media._ID)
     val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -722,75 +892,5 @@ private fun loadThumbnailFromUri(context: Context, uri: Uri): ImageBitmap? {
         }
     } catch (e: Exception) {
         null
-    }
-}
-
-// Rule-of-Thirds 3x3 Grid Overlay Composable
-@Composable
-fun GridOverlay(
-    modifier: Modifier = Modifier
-) {
-    Canvas(modifier = modifier.fillMaxSize()) {
-        val width = size.width
-        val height = size.height
-
-        val firstVertical = width / 3
-        val secondVertical = (width / 3) * 2
-
-        val firstHorizontal = height / 3
-        val secondHorizontal = (height / 3) * 2
-
-        val strokeWidth = 1.dp.toPx()
-        val gridColor = Color.White.copy(alpha = 0.4f)
-
-        // Draw Vertical Grid Lines
-        drawLine(
-            color = gridColor,
-            start = Offset(firstVertical, 0f),
-            end = Offset(firstVertical, height),
-            strokeWidth = strokeWidth
-        )
-        drawLine(
-            color = gridColor,
-            start = Offset(secondVertical, 0f),
-            end = Offset(secondVertical, height),
-            strokeWidth = strokeWidth
-        )
-
-        // Draw Horizontal Grid Lines
-        drawLine(
-            color = gridColor,
-            start = Offset(0f, firstHorizontal),
-            end = Offset(width, firstHorizontal),
-            strokeWidth = strokeWidth
-        )
-        drawLine(
-            color = gridColor,
-            start = Offset(0f, secondHorizontal),
-            end = Offset(width, secondHorizontal),
-            strokeWidth = strokeWidth
-        )
-    }
-}
-
-// Visual Countdown Overlay Composable
-@Composable
-fun CountdownOverlay(
-    secondsLeft: Int
-) {
-    if (secondsLeft > 0) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.3f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "$secondsLeft",
-                color = Color.White,
-                fontSize = 96.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
     }
 }
